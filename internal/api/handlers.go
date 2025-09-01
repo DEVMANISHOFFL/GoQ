@@ -34,7 +34,6 @@ func (a *API) EnqueueHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Encode job payload as valid JSON string for JSONB column
 	payloadJSON, err := json.Marshal(payload["data"])
 	if err != nil {
 		http.Error(w, "failed to encode payload", http.StatusInternalServerError)
@@ -44,10 +43,10 @@ func (a *API) EnqueueHandler(w http.ResponseWriter, r *http.Request) {
 	job := models.Job{
 		ID:           uuid.New().String(),
 		Type:         "mock",
-		Payload:      string(payloadJSON), // ✅ valid JSON for JSONB
+		Payload:      string(payloadJSON),
 		Status:       models.StatusPending,
 		Retries:      0,
-		MaxRetries:   3, // ✅ always set default retries
+		MaxRetries:   3,
 		ErrorMessage: "",
 	}
 

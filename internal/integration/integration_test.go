@@ -97,7 +97,6 @@ func TestJobLifecycle(t *testing.T) {
 			t.Fatalf("decode enqueue resp: %v", err)
 		}
 
-		// Allow extra time for retries
 		job := pollJobStatus(t, server.URL, enqResp.ID, 15*time.Second)
 		if job.Status != models.StatusFailed {
 			t.Fatalf("expected failed, got %s", job.Status)
@@ -120,7 +119,6 @@ func TestJobLifecycle(t *testing.T) {
 			t.Fatalf("decode enqueue resp: %v", err)
 		}
 
-		// Allow more time because timeouts + retries take ~9s total
 		job := pollJobStatus(t, server.URL, enqResp.ID, 20*time.Second)
 		if job.Status != models.StatusFailed {
 			t.Fatalf("expected failed (timeout), got %s", job.Status)
@@ -135,7 +133,6 @@ func TestJobLifecycle(t *testing.T) {
 		jobs := []string{"send_email", "fail", "slow"}
 		var jobIDs []string
 
-		// enqueue all
 		for _, payloadVal := range jobs {
 			payload := []byte(`{"data":"` + payloadVal + `"}`)
 			resp, err := http.Post(server.URL+"/enqueue", "application/json", bytes.NewBuffer(payload))
@@ -151,7 +148,6 @@ func TestJobLifecycle(t *testing.T) {
 			jobIDs = append(jobIDs, enqResp.ID)
 		}
 
-		// poll all
 		for i, id := range jobIDs {
 			job := pollJobStatus(t, server.URL, id, 20*time.Second)
 			switch jobs[i] {
