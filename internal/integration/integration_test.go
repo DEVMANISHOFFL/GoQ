@@ -17,7 +17,6 @@ import (
 	"distributed-job-queue/internal/worker"
 )
 
-// pollJobStatus keeps checking /status until job is finished or deadline expires.
 func pollJobStatus(t *testing.T, serverURL, jobID string, deadline time.Duration) models.Job {
 	t.Helper()
 
