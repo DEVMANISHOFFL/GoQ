@@ -58,3 +58,11 @@ func (d *DB) UpdateJobFailure(ctx context.Context, id string, retries, maxRetrie
 	)
 	return err
 }
+
+func (d *DB) UpdateJobRetry(ctx context.Context, id string, retries int, errMsg string) error {
+	_, err := d.pool.Exec(ctx,
+		`UPDATE jobs SET retries=$1, error_message=$2, updated_at=NOW() WHERE id=$3`,
+		retries, errMsg, id,
+	)
+	return err
+}

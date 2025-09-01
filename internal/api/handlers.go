@@ -27,29 +27,41 @@ func (a *API) Router() http.Handler {
 	mux.HandleFunc("/status/", a.StatusHandler)
 	return mux
 }
-
 func (a *API) EnqueueHandler(w http.ResponseWriter, r *http.Request) {
 	var payload map[string]string
-	json.NewDecoder(r.Body).Decode(&payload)
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "invalid request payload", http.StatusBadRequest)
+		return
+	}
+
+	// Encode job payload as valid JSON string for JSONB column
+	payloadJSON, err := json.Marshal(payload["data"])
+	if err != nil {
+		http.Error(w, "failed to encode payload", http.StatusInternalServerError)
+		return
+	}
 
 	job := models.Job{
-		ID:      uuid.New().String(),
-		Type:    "mock",
-		Payload: fmt.Sprintf(`"%s"`, payload["data"]),
-		Status:  models.StatusPending,
+		ID:           uuid.New().String(),
+		Type:         "mock",
+		Payload:      string(payloadJSON), // ✅ valid JSON for JSONB
+		Status:       models.StatusPending,
+		Retries:      0,
+		MaxRetries:   3, // ✅ always set default retries
+		ErrorMessage: "",
 	}
 
 	if err := a.db.SaveJob(r.Context(), job); err != nil {
-		http.Error(w, "failed to save job", http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("failed to save job: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	if err := a.queue.Enqueue(r.Context(), job.ID); err != nil {
-		http.Error(w, "failed to enqueue job", http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("failed to enqueue job: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	w.WriteHeader(http.StatusAccepted)
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(job)
 }
 

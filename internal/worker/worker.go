@@ -33,40 +33,64 @@ func (w *Worker) Start(ctx context.Context) {
 			continue
 		}
 
+		fmt.Printf("Dequeued job %s: retries=%d, max_retries=%d\n", job.ID, job.Retries, job.MaxRetries)
 		w.db.UpdateJobStatus(ctx, job.ID, models.StatusRunning)
 
-		fmt.Println("Processing job:", job.ID, "Payload:", job.Payload)
+		// Give each job a max execution window
+		execCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		err = w.execute(execCtx, job)
+		cancel()
 
-		err = w.execute(job)
 		if err != nil {
 			job.Retries++
 			job.ErrorMessage = err.Error()
 
 			if job.Retries >= job.MaxRetries {
-				fmt.Println("Job failed permanently:", job.ID)
+				fmt.Println("Job failed permanently:", job.ID, "error:", job.ErrorMessage)
 				w.db.UpdateJobFailure(ctx, job.ID, job.Retries, job.MaxRetries, job.ErrorMessage)
 			} else {
 				fmt.Println("Retrying job:", job.ID, "attempt", job.Retries)
-				time.Sleep(time.Duration(job.Retries) * time.Second)
+				w.db.UpdateJobRetry(ctx, job.ID, job.Retries, job.ErrorMessage) // ✅ persist retries
+				time.Sleep(time.Duration(job.Retries) * time.Second)            // backoff
 				w.db.UpdateJobStatus(ctx, job.ID, models.StatusPending)
-				w.db.SaveJob(ctx, job)
 				w.queue.Enqueue(ctx, job.ID)
 			}
 			continue
 		}
 
+		// Success
+		fmt.Println("Job succeeded:", job.ID)
 		w.db.UpdateJobStatus(ctx, job.ID, models.StatusSuccess)
 	}
 }
 
-func (w *Worker) execute(job models.Job) error {
-	var data string
-	if err := json.Unmarshal([]byte(job.Payload), &data); err != nil {
+// Execute job based on payload content
+func (w *Worker) execute(ctx context.Context, job models.Job) error {
+	var payload string
+	if err := json.Unmarshal([]byte(job.Payload), &payload); err != nil {
 		return fmt.Errorf("invalid payload: %v", err)
 	}
 
-	if data == "fail" {
-		return fmt.Errorf("simulated failure for payload: %s", data)
+	switch payload {
+	case "fail":
+		return fmt.Errorf("simulated failure for payload: %s", payload)
+
+	case "slow":
+		// Simulate long-running job that exceeds timeout
+		select {
+		case <-time.After(5 * time.Second): // job takes 5s
+			return nil
+		case <-ctx.Done():
+			return fmt.Errorf("job timed out: %v", ctx.Err())
+		}
+
+	default:
+		// Normal quick job
+		select {
+		case <-time.After(1 * time.Second):
+			return nil
+		case <-ctx.Done():
+			return fmt.Errorf("job timed out: %v", ctx.Err())
+		}
 	}
-	return nil
 }

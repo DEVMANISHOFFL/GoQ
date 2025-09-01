@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -96,7 +97,8 @@ func TestJobLifecycle(t *testing.T) {
 			t.Fatalf("decode enqueue resp: %v", err)
 		}
 
-		job := pollJobStatus(t, server.URL, enqResp.ID, 10*time.Second)
+		// Allow extra time for retries
+		job := pollJobStatus(t, server.URL, enqResp.ID, 15*time.Second)
 		if job.Status != models.StatusFailed {
 			t.Fatalf("expected failed, got %s", job.Status)
 		}
@@ -105,8 +107,32 @@ func TestJobLifecycle(t *testing.T) {
 		}
 	})
 
+	t.Run("timeout job", func(t *testing.T) {
+		payload := []byte(`{"data":"slow"}`)
+		resp, err := http.Post(server.URL+"/enqueue", "application/json", bytes.NewBuffer(payload))
+		if err != nil {
+			t.Fatalf("enqueue request failed: %v", err)
+		}
+		defer resp.Body.Close()
+
+		var enqResp models.Job
+		if err := json.NewDecoder(resp.Body).Decode(&enqResp); err != nil {
+			t.Fatalf("decode enqueue resp: %v", err)
+		}
+
+		// Allow more time because timeouts + retries take ~9s total
+		job := pollJobStatus(t, server.URL, enqResp.ID, 20*time.Second)
+		if job.Status != models.StatusFailed {
+			t.Fatalf("expected failed (timeout), got %s", job.Status)
+		}
+		if job.ErrorMessage == "" || !strings.HasPrefix(job.ErrorMessage, "job timed out") {
+			t.Fatalf("expected timeout error, got %s", job.ErrorMessage)
+		}
+
+	})
+
 	t.Run("mixed batch of jobs", func(t *testing.T) {
-		jobs := []string{"send_email", "fail", "send_email", "fail"}
+		jobs := []string{"send_email", "fail", "slow"}
 		var jobIDs []string
 
 		// enqueue all
@@ -127,14 +153,22 @@ func TestJobLifecycle(t *testing.T) {
 
 		// poll all
 		for i, id := range jobIDs {
-			job := pollJobStatus(t, server.URL, id, 10*time.Second)
-			if jobs[i] == "fail" {
+			job := pollJobStatus(t, server.URL, id, 20*time.Second)
+			switch jobs[i] {
+			case "send_email":
+				if job.Status != models.StatusSuccess {
+					t.Fatalf("expected success, got %s for job %s", job.Status, id)
+				}
+			case "fail":
 				if job.Status != models.StatusFailed {
 					t.Fatalf("expected failed, got %s for job %s", job.Status, id)
 				}
-			} else {
-				if job.Status != models.StatusSuccess {
-					t.Fatalf("expected success, got %s for job %s", job.Status, id)
+			case "slow":
+				if job.Status != models.StatusFailed {
+					t.Fatalf("expected timeout fail, got %s for job %s", job.Status, id)
+				}
+				if !strings.HasPrefix(job.ErrorMessage, "job timed out") {
+					t.Fatalf("expected timeout error, got %s", job.ErrorMessage)
 				}
 			}
 		}
