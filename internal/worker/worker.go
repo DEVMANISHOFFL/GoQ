@@ -5,7 +5,9 @@ import (
 	"distributed-job-queue/internal/db"
 	"distributed-job-queue/internal/models"
 	"distributed-job-queue/internal/queue"
+	"encoding/json"
 	"fmt"
+	"time"
 )
 
 type Worker struct {
@@ -35,6 +37,36 @@ func (w *Worker) Start(ctx context.Context) {
 
 		fmt.Println("Processing job:", job.ID, "Payload:", job.Payload)
 
+		err = w.execute(job)
+		if err != nil {
+			job.Retries++
+			job.ErrorMessage = err.Error()
+
+			if job.Retries >= job.MaxRetries {
+				fmt.Println("Job failed permanently:", job.ID)
+				w.db.UpdateJobFailure(ctx, job.ID, job.Retries, job.MaxRetries, job.ErrorMessage)
+			} else {
+				fmt.Println("Retrying job:", job.ID, "attempt", job.Retries)
+				time.Sleep(time.Duration(job.Retries) * time.Second)
+				w.db.UpdateJobStatus(ctx, job.ID, models.StatusPending)
+				w.db.SaveJob(ctx, job)
+				w.queue.Enqueue(ctx, job.ID)
+			}
+			continue
+		}
+
 		w.db.UpdateJobStatus(ctx, job.ID, models.StatusSuccess)
 	}
+}
+
+func (w *Worker) execute(job models.Job) error {
+	var data string
+	if err := json.Unmarshal([]byte(job.Payload), &data); err != nil {
+		return fmt.Errorf("invalid payload: %v", err)
+	}
+
+	if data == "fail" {
+		return fmt.Errorf("simulated failure for payload: %s", data)
+	}
+	return nil
 }
